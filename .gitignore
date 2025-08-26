@@ -67,3 +67,5 @@ node_modules/
 
 # dataconnect generated files
 .dataconnect
+team-landline-firebase-adminsdk-fbsvc-*.json
+*.json # or be more specific
