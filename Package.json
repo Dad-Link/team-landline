@@ -1,0 +1,32 @@
+{
+  "name": "team-landline",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Shopify app for Team Landline phone number service",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "build": "webpack --mode production",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@shopify/app-bridge-react": "^4.0.0",
+    "@shopify/polaris": "^11.0.0",
+    "@shopify/shopify-app-express": "^2.0.0",
+    "@shopify/shopify-app-session-storage-memory": "^1.0.0",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.0",
+    "firebase": "^10.0.0",
+    "firebase-admin": "^11.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "twilio": "^4.0.0"
+  },
+  "devDependencies": {
+    "@shopify/app-bridge-types": "^0.3.0",
+    "nodemon": "^2.0.0",
+    "webpack": "^5.0.0",
+    "webpack-cli": "^4.0.0"
+  }
+}

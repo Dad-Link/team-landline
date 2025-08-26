@@ -1,0 +1,48 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "sms-history",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "shopDomain", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "call-history",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "shopDomain", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "addons",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "shopDomain", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "cycle", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "call-recordings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "shopDomain", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sms-campaigns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "shopDomain", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -1,0 +1,47 @@
+{
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": ["node_modules", ".git", "firebase-debug.log", "firebase-debug.*.log"],
+      "runtime": "nodejs20"
+    }
+  ],
+  "hosting": {
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "function": { "functionId": "api", "region": "europe-west2" }
+      },
+      {
+        "source": "/auth/**",
+        "function": { "functionId": "api", "region": "europe-west2" }
+      },
+      {
+        "source": "/webhooks/**",
+        "function": { "functionId": "api", "region": "europe-west2" }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "/index.html",
+        "headers": [
+          {
+            "key": "Content-Security-Policy",
+            "value": "default-src 'self' https://cdn.shopify.com; frame-ancestors https://admin.shopify.com https://*.myshopify.com; script-src 'self' https://cdn.shopify.com 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https://cdn.shopify.com https://admin.shopify.com https://*.myshopify.com https://*.shopifycloud.com;"
+          }
+        ]
+      }
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}

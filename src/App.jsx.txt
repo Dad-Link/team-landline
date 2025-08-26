@@ -1,0 +1,178 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { AppProvider, Page, Card, Layout, Button, DataTable, Modal, TextContainer } from '@shopify/polaris';
+import { Provider as AppBridgeProvider, useAppBridge } from '@shopify/app-bridge-react';
+import { authenticatedFetch, getSessionToken } from '@shopify/app-bridge-utils';
+
+function shopFromHost(host) {
+  try {
+    if (!host) return '';
+    const decoded = atob(host); // "SHOP.myshopify.com/admin"
+    const m = decoded.match(/^([^/]+)\/admin$/i);
+    return m ? m[1].toLowerCase() : '';
+  } catch {
+    return '';
+  }
+}
+
+function useAuthedFetch() {
+  const app = useAppBridge();
+  const fetchFn = useMemo(() => authenticatedFetch(app), [app]);
+
+  return async (url, options = {}) => {
+    // Ensure we include a fresh session token and shop header
+    const host = new URLSearchParams(window.location.search).get('host') || '';
+    const shop = new URLSearchParams(window.location.search).get('shop') || shopFromHost(host) || '';
+
+    let headers = {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    };
+
+    try {
+      const token = await getSessionToken(app);
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+    } catch {
+      // If token fetch fails, the backend should still 401 with reauth headers
+    }
+    if (shop) headers['X-Shop-Domain'] = shop;
+
+    const res = await fetchFn(url, { ...options, headers });
+    return res;
+  };
+}
+
+function TeamLandlineApp() {
+  const afetch = useAuthedFetch();
+
+  const [numbers, setNumbers] = useState([]);
+  const [callHistory, setCallHistory] = useState([]);
+  const [selectedNumber, setSelectedNumber] = useState(null);
+  const [showPurchaseModal, setShowPurchaseModal] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    fetchAvailableNumbers();
+    fetchCallHistory();
+  }, []);
+
+  const fetchAvailableNumbers = async () => {
+    const response = await afetch('/api/numbers');
+    if (response.ok) {
+      const data = await response.json();
+      setNumbers(Array.isArray(data) ? data : []);
+    } else {
+      setNumbers([]);
+    }
+  };
+
+  const fetchCallHistory = async () => {
+    const response = await afetch('/api/call-history');
+    if (response.ok) {
+      const data = await response.json();
+      setCallHistory(Array.isArray(data) ? data : []);
+    } else {
+      setCallHistory([]);
+    }
+  };
+
+  const purchaseNumber = async () => {
+    if (!selectedNumber) return;
+    setBusy(true);
+    try {
+      await afetch('/api/numbers', {
+        method: 'POST',
+        body: JSON.stringify({
+          number: selectedNumber.phoneNumber || selectedNumber.number,
+          area: selectedNumber.location || selectedNumber.area || '',
+          price: selectedNumber.monthlyRate || selectedNumber.price || 2.0,
+          type: selectedNumber.type || 'geographic'
+        })
+      });
+      setShowPurchaseModal(false);
+      await fetchAvailableNumbers();
+      await fetchCallHistory();
+    } catch (e) {
+      // If backend replies 401 with reauth headers, authenticatedFetch will handle redirect automatically
+      console.error('Purchase failed', e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const numberRows = numbers.map((number) => [
+    number.phoneNumber || number.number,
+    number.location || number.area || '',
+    `£${number.monthlyRate || number.price || 2}/month`,
+    <Button onClick={() => { setSelectedNumber(number); setShowPurchaseModal(true); }}>Select</Button>,
+  ]);
+
+  const callRows = callHistory.map((call) => [
+    call.date || call.timestamp || '—',
+    call.number || `${call.from} → ${call.to}` || '—',
+    call.duration || 0,
+    call.type || call.status || '—',
+  ]);
+
+  return (
+    <Page title="Team Landline Dashboard">
+      <Layout>
+        <Layout.Section>
+          <Card title="Available Numbers" sectioned>
+            <DataTable
+              columnContentTypes={['text', 'text', 'text', 'text']}
+              headings={['Number', 'Location', 'Monthly Rate', 'Action']}
+              rows={numberRows}
+            />
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card title="Call History" sectioned>
+            <DataTable
+              columnContentTypes={['text', 'text', 'text', 'text']}
+              headings={['Date', 'Number', 'Duration', 'Type']}
+              rows={callRows}
+            />
+          </Card>
+        </Layout.Section>
+      </Layout>
+
+      <Modal
+        open={showPurchaseModal}
+        onClose={() => setShowPurchaseModal(false)}
+        title="Purchase Number"
+        primaryAction={{
+          content: busy ? 'Purchasing…' : 'Purchase',
+          onAction: purchaseNumber,
+          disabled: busy,
+        }}
+      >
+        <Modal.Section>
+          <TextContainer>
+            <p>Purchase {selectedNumber?.phoneNumber || selectedNumber?.number} for £{selectedNumber?.monthlyRate || selectedNumber?.price || 2}/month?</p>
+          </TextContainer>
+        </Modal.Section>
+      </Modal>
+    </Page>
+  );
+}
+
+export default function App() {
+  const host = new URLSearchParams(location.search).get('host') || '';
+  const apiKey = (typeof process !== 'undefined' && process.env && process.env.SHOPIFY_API_KEY) || '29fb57e2427ae4aa6024e2223760a9c';
+
+  return (
+    <AppBridgeProvider
+      config={{
+        apiKey,
+        host,
+        // forceRedirect ensures we’re always embedded and Admin can reauth properly
+        forceRedirect: true,
+      }}
+    >
+      <AppProvider>
+        <TeamLandlineApp />
+      </AppProvider>
+    </AppBridgeProvider>
+  );
+}
