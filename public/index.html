@@ -528,27 +528,29 @@
             return () => { stop = true; clearInterval(id); };
           }, [sessionToken]);
 
+          // Replace your makeAuthenticatedRequest with this version:
           const makeAuthenticatedRequest = async (url, options = {}) => {
-              const params = new URLSearchParams(window.location.search);
-              const host = params.get('host') || '';
-              let bearer = sessionToken || await getFreshToken(app);
+            const params = new URLSearchParams(window.location.search);
+            const host = params.get('host') || '';
+            // Prefer existing token; authenticatedFetch will still add one if missing
+            let bearer = sessionToken || await getFreshToken(app);
 
-              const headers = {
-                  'Content-Type': 'application/json',
-                  'X-Shop-Domain': shopDomain,  // This should be set
-                  ...(options.headers || {})
-              };
-              if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+            const headers = {
+              'Content-Type': 'application/json',
+              'X-Shop-Domain': shopDomain,
+              ...(options.headers || {})
+            };
+            if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
 
-              const method = (options.method || 'GET').toUpperCase();
-              let body = options.body;
-              if (body && headers['Content-Type']?.includes('application/json') && method !== 'GET') {
-                  try {
-                      const parsed = typeof body === 'string' ? JSON.parse(body) : body;
-                      if (parsed && !parsed.shop) parsed.shop = shopDomain;  // Add shop to body
-                      body = JSON.stringify(parsed);
-                  } catch { /* noop */ }
-              }
+            const method = (options.method || 'GET').toUpperCase();
+            let body = options.body;
+            if (body && headers['Content-Type']?.includes('application/json') && method !== 'GET') {
+              try {
+                const parsed = typeof body === 'string' ? JSON.parse(body) : body;
+                if (parsed && !parsed.shop) parsed.shop = shopDomain;
+                body = JSON.stringify(parsed);
+              } catch { /* noop */ }
+            }
 
             const fetchImpl = window.__ab_fetch || fetch.bind(window);
             const res = await fetchImpl(url, { ...options, headers, body });
