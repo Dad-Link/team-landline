@@ -532,6 +532,15 @@
           const makeAuthenticatedRequest = async (url, options = {}) => {
             const params = new URLSearchParams(window.location.search);
             const host = params.get('host') || '';
+            
+            // Enhanced debugging for billing requests
+            const isBillingRequest = url.includes('/api/billing');
+            if (isBillingRequest) {
+              console.log(`🔍 Billing API Request: ${options.method || 'GET'} ${url}`);
+              console.log(`🏪 Shop Domain: ${shopDomain}`);
+              console.log(`🎯 Host: ${host}`);
+            }
+            
             // Prefer existing token; authenticatedFetch will still add one if missing
             let bearer = sessionToken || await getFreshToken(app);
 
@@ -540,7 +549,14 @@
               'X-Shop-Domain': shopDomain,
               ...(options.headers || {})
             };
-            if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+            if (bearer) {
+              headers['Authorization'] = `Bearer ${bearer}`;
+              if (isBillingRequest) {
+                console.log(`🔐 Using Bearer token (length: ${bearer.length})`);
+              }
+            } else if (isBillingRequest) {
+              console.warn('⚠️ No bearer token available for billing request');
+            }
 
             const method = (options.method || 'GET').toUpperCase();
             let body = options.body;
@@ -555,12 +571,20 @@
             const fetchImpl = window.__ab_fetch || fetch.bind(window);
             const res = await fetchImpl(url, { ...options, headers, body });
 
+            if (isBillingRequest) {
+              console.log(`📡 Billing API Response: ${res.status} ${res.statusText}`);
+            }
+
             // If server asked for reauth, bounce to our /auth on the top window
             if (res.status === 401) {
+              if (isBillingRequest) {
+                console.log('🔄 Billing request got 401, checking for reauth headers');
+              }
               try {
                 const need = res.headers.get('X-Shopify-API-Request-Failure-Reauthorize');
                 const reauthUrl = res.headers.get('X-Shopify-API-Request-Failure-Reauthorize-Url');
                 if (need === '1') {
+                  console.log('🔄 Reauthorization required, redirecting...');
                   if (reauthUrl) {
                     window.top.location.href = reauthUrl;
                   } else if (shopDomain) {
@@ -573,7 +597,11 @@
             if (!res.ok) {
               try {
                 const errText = await res.clone().text();
-                console.error('API error', res.status, url, errText);
+                if (isBillingRequest) {
+                  console.error('❌ Billing API error:', res.status, url, errText);
+                } else {
+                  console.error('API error', res.status, url, errText);
+                }
               } catch {}
             }
             return res;
@@ -1492,25 +1520,8 @@
             return regression[currentPlan] || 'starter';
         }
 
-        function subscribeToPlan(plan) {
-          (async () => {
-            try {
-              const btn = event?.target;
-              const originalText = btn?.textContent;
-              if (btn) { btn.textContent = '⏳ Processing...'; btn.disabled = true; }
-              const host = new URLSearchParams(window.location.search).get('host') || '';
-              const resp = await makeAuthenticatedRequest(`/api/billing/subscribe/${encodeURIComponent(plan)}?host=${encodeURIComponent(host)}`, { method: 'POST' });
-              const data = await resp.json().catch(() => ({}));
-              if (!resp.ok || !data.confirmationUrl) throw new Error(data.error || 'Failed to start billing');
-              window.top.location.href = data.confirmationUrl;
-            } catch (e) {
-              alert(`❌ Billing failed: ${e.message}`);
-            } finally {
-              const btn = event?.target;
-              if (btn) { btn.textContent = 'Upgrade'; btn.disabled = false; }
-            }
-          })();
-        }
+        // REMOVED: Global subscribeToPlan function - causes scope issues
+        // Use BillingTab's local subscribeToPlan function instead
 
         function DashboardTab({ data }) {
           const sms = data.usage?.sms;
@@ -2797,61 +2808,149 @@
           };
 
           const startShopifyBilling = async (plan) => {
+            console.log(`🔄 Starting Shopify billing for plan: ${plan}`);
             setUpgrading(plan);
             try {
               const qp = new URLSearchParams(window.location.search);
               const host = qp.get('host') || '';
               const shop = qp.get('shop') || '';
-              const resp = await makeAuthenticatedRequest(
-                `/api/billing/subscribe/${encodeURIComponent(plan)}?host=${encodeURIComponent(host)}`,
-                { method: 'POST' }
-              );
+              
+              console.log(`💳 Billing parameters: shop=${shop}, host=${host}, plan=${plan}`);
+              
+              if (!shop) {
+                throw new Error('Missing shop parameter - cannot process billing');
+              }
+              
+              const url = `/api/billing/subscribe/${encodeURIComponent(plan)}?host=${encodeURIComponent(host)}`;
+              console.log(`🌐 Making billing request to: ${url}`);
+              
+              const resp = await makeAuthenticatedRequest(url, { method: 'POST' });
+              console.log(`📡 Billing response status: ${resp.status}`);
+              
               const text = await resp.text();
               let data = {};
-              try { data = JSON.parse(text || '{}'); } catch {}
+              try { 
+                data = JSON.parse(text || '{}'); 
+                console.log('📦 Billing response data:', data);
+              } catch (parseError) {
+                console.error('❌ Failed to parse billing response:', text);
+              }
 
-              if (!resp.ok || !data.confirmationUrl) {
-                const msg = (data.error || text || 'Failed to start billing').toString();
+              if (!resp.ok) {
+                const errorMsg = data.error || text || `HTTP ${resp.status} error`;
+                console.error(`❌ Billing request failed: ${errorMsg}`);
+                
                 // If the shop isn't installed (no access token), go through OAuth
-                if (msg.toLowerCase().includes('shop not installed') && shop) {
+                if (errorMsg.toLowerCase().includes('shop not installed') && shop) {
+                  console.log('🔄 Redirecting to OAuth for shop installation');
                   window.top.location.href = `/auth?shop=${encodeURIComponent(shop)}${host ? `&host=${encodeURIComponent(host)}` : ''}`;
                   return;
                 }
-                throw new Error(msg);
+                throw new Error(errorMsg);
               }
-              window.top.location.href = data.confirmationUrl;
+              
+              if (!data.confirmationUrl) {
+                console.error('❌ No confirmationUrl in response:', data);
+                throw new Error('No billing confirmation URL received from Shopify');
+              }
+              
+              console.log(`✅ Redirecting to Shopify billing: ${data.confirmationUrl}`);
+              
+              // Enhanced redirect handling for embedded Shopify apps
+              try {
+                // Try App Bridge redirect first (works better in embedded apps)
+                if (window.shopify && window.shopify.redirect) {
+                  console.log('🌍 Using Shopify App Bridge redirect');
+                  window.shopify.redirect(data.confirmationUrl);
+                } else if (app && app.dispatch) {
+                  console.log('🌍 Using App Bridge dispatch redirect');
+                  app.dispatch({ type: 'Redirect', payload: { url: data.confirmationUrl, newContext: true } });
+                } else {
+                  console.log('🌍 Using window.top.location redirect');
+                  window.top.location.href = data.confirmationUrl;
+                }
+              } catch (redirectError) {
+                console.error('❌ Redirect error:', redirectError);
+                // Fallback to direct redirect
+                window.top.location.href = data.confirmationUrl;
+              }
             } catch (e) {
-              alert(`❌ Billing failed: ${e.message}`);
+              console.error('💥 Billing error:', e);
+              alert(`❌ Billing failed: ${e.message}\n\nPlease try again or contact support if the issue persists.`);
             } finally {
               setUpgrading(null);
             }
           };
 
           const startAddonPurchase = async (addonCode) => {
+            console.log(`🛒 Starting addon purchase: ${addonCode}`);
             setPurchasing(addonCode);
             try {
               const qp = new URLSearchParams(window.location.search);
               const host = qp.get('host') || '';
               const shop = qp.get('shop') || '';
-              const resp = await makeAuthenticatedRequest(
-                `/api/billing/addon/${encodeURIComponent(addonCode)}?host=${encodeURIComponent(host)}`,
-                { method: 'POST' }
-              );
+              
+              console.log(`💳 Addon purchase parameters: shop=${shop}, host=${host}, addon=${addonCode}`);
+              
+              if (!shop) {
+                throw new Error('Missing shop parameter - cannot process addon purchase');
+              }
+              
+              const url = `/api/billing/addon/${encodeURIComponent(addonCode)}?host=${encodeURIComponent(host)}`;
+              console.log(`🌐 Making addon request to: ${url}`);
+              
+              const resp = await makeAuthenticatedRequest(url, { method: 'POST' });
+              console.log(`📡 Addon response status: ${resp.status}`);
+              
               const text = await resp.text();
               let data = {};
-              try { data = JSON.parse(text || '{}'); } catch {}
+              try { 
+                data = JSON.parse(text || '{}'); 
+                console.log('📦 Addon response data:', data);
+              } catch (parseError) {
+                console.error('❌ Failed to parse addon response:', text);
+              }
 
-              if (!resp.ok || !data.confirmationUrl) {
-                const msg = (data.error || text || 'Failed to start add-on purchase').toString();
-                if (msg.toLowerCase().includes('shop not installed') && shop) {
+              if (!resp.ok) {
+                const errorMsg = data.error || text || `HTTP ${resp.status} error`;
+                console.error(`❌ Addon request failed: ${errorMsg}`);
+                
+                if (errorMsg.toLowerCase().includes('shop not installed') && shop) {
+                  console.log('🔄 Redirecting to OAuth for shop installation');
                   window.top.location.href = `/auth?shop=${encodeURIComponent(shop)}${host ? `&host=${encodeURIComponent(host)}` : ''}`;
                   return;
                 }
-                throw new Error(msg);
+                throw new Error(errorMsg);
               }
-              window.top.location.href = data.confirmationUrl;
+              
+              if (!data.confirmationUrl) {
+                console.error('❌ No confirmationUrl in addon response:', data);
+                throw new Error('No addon confirmation URL received from Shopify');
+              }
+              
+              console.log(`✅ Redirecting to Shopify addon billing: ${data.confirmationUrl}`);
+              
+              // Enhanced redirect handling for embedded Shopify apps
+              try {
+                // Try App Bridge redirect first (works better in embedded apps)
+                if (window.shopify && window.shopify.redirect) {
+                  console.log('🌍 Using Shopify App Bridge redirect');
+                  window.shopify.redirect(data.confirmationUrl);
+                } else if (app && app.dispatch) {
+                  console.log('🌍 Using App Bridge dispatch redirect');
+                  app.dispatch({ type: 'Redirect', payload: { url: data.confirmationUrl, newContext: true } });
+                } else {
+                  console.log('🌍 Using window.top.location redirect');
+                  window.top.location.href = data.confirmationUrl;
+                }
+              } catch (redirectError) {
+                console.error('❌ Redirect error:', redirectError);
+                // Fallback to direct redirect
+                window.top.location.href = data.confirmationUrl;
+              }
             } catch (e) {
-              alert(`❌ Purchase failed: ${e.message}`);
+              console.error('💥 Addon purchase error:', e);
+              alert(`❌ Purchase failed: ${e.message}\n\nPlease try again or contact support if the issue persists.`);
             } finally {
               setPurchasing(null);
             }
