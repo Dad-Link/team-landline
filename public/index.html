@@ -134,6 +134,26 @@
             max-width: 1200px;
             margin: 0 auto;
         }
+        
+        .notification {
+            padding: 12px 16px;
+            border-radius: var(--p-border-radius);
+            margin-bottom: 16px;
+            border: 1px solid;
+            font-weight: 500;
+        }
+        
+        .notification.success {
+            background: #f0f9ff;
+            border-color: var(--p-color-success);
+            color: var(--p-color-success);
+        }
+        
+        .notification.error {
+            background: #fef2f2;
+            border-color: var(--p-color-critical);
+            color: var(--p-color-critical);
+        }
 
         .service-toggle-header {
             background: var(--p-color-surface);
@@ -343,7 +363,7 @@
       const { useState, useEffect } = React;
 
       // Wait for Shopify/App Bridge to be present without calling shopify.ready()
-      async function waitForShopifyReady(maxMs = 15000) {
+      async function waitForShopifyReady(maxMs = 5000) {
         const start = Date.now();
         const ok = () =>
           (typeof window.shopify?.idToken === 'function') ||
@@ -351,7 +371,7 @@
         if (ok()) return true;
         while (Date.now() - start < maxMs) {
           if (ok()) return true;
-          await new Promise(r => setTimeout(r, 150));
+          await new Promise(r => setTimeout(r, 100));
         }
         return false;
       }
@@ -405,6 +425,7 @@
         const [app, setApp] = useState(null);
         const [sessionToken, setSessionToken] = useState(null);
         const [shopDomain, setShopDomain] = useState('');
+        const [notification, setNotification] = useState(null);
 
         useEffect(() => {
           const initializeApp = async () => {
@@ -447,7 +468,10 @@
               }
 
               // Wait for App Bridge scripts to be present (no ready() calls)
-              await waitForShopifyReady(15000);
+              const scriptsReady = await waitForShopifyReady(5000);
+              if (!scriptsReady) {
+                console.warn('App Bridge scripts not loaded within 5s');
+              }
 
               // Create App Bridge instance (only if we have host)
               let appInstance = null;
@@ -477,22 +501,20 @@
                 console.warn('App Bridge createApp error:', e?.message || e);
               }
 
-              // If we didn't get an initial token, try to fetch one; otherwise keep the seeded token
-              const tryOnce = () =>
-                Promise.race([
-                  getFreshToken(appInstance),
-                  new Promise((_, reject) => setTimeout(() => reject(new Error('App Bridge token timeout')), 12000))
-                ]);
-
-              let token = initialToken || null;
-              if (!token) {
+              // Streamlined token fetching with shorter timeout
+              const tryGetToken = async () => {
                 try {
-                  token = await tryOnce();
-                } catch {
-                  await new Promise(r => setTimeout(r, 400));
-                  token = await tryOnce().catch(() => null);
+                  return await Promise.race([
+                    getFreshToken(appInstance),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Token timeout')), 5000))
+                  ]);
+                } catch (e) {
+                  console.warn('Token fetch failed:', e.message);
+                  return null;
                 }
-              }
+              };
+
+              let token = initialToken || await tryGetToken();
 
               if (!token) {
                 setError('Initialization failed: No session token from App Bridge');
@@ -583,6 +605,32 @@
               initializeNavigation();
               loadAllData();
               loadSubscription();
+              
+              // Check for billing success/failure in URL parameters
+              const urlParams = new URLSearchParams(window.location.search);
+              if (urlParams.get('billing_success') === '1') {
+                console.log('✅ Billing success detected, refreshing subscription data');
+                // Show success message
+                setTimeout(() => {
+                  setError(''); // Clear any previous errors
+                  loadSubscription();
+                  loadUsage();
+                  // Show success feedback
+                  setNotification({ type: 'success', message: '✅ Subscription activated successfully!' });
+                  setTimeout(() => setNotification(null), 5000);
+                }, 1000); // Small delay to ensure Shopify has processed the subscription
+              } else if (urlParams.get('billing_error') === '1') {
+                console.warn('❌ Billing error detected');
+                setError('Billing process failed. Please try again.');
+              } else if (urlParams.get('addon_success') === '1') {
+                console.log('✅ Add-on purchase success detected');
+                setTimeout(() => {
+                  setError(''); // Clear any previous errors
+                  loadUsage();
+                  setNotification({ type: 'success', message: '✅ Add-on purchased successfully!' });
+                  setTimeout(() => setNotification(null), 5000);
+                }, 1000);
+              }
             }
           }, [shopDomain]);
 
@@ -771,6 +819,7 @@
                 )
               )
             ),
+            notification && React.createElement('div', { className: `notification ${notification.type}` }, notification.message),
             error && React.createElement('div', { className: 'polaris-card', style: { borderColor: 'var(--p-color-critical)', background: '#fef2f2' } }, React.createElement('strong', null, 'Error: '), error),
             renderTabContent(activeTab, activeService, {
               landlineNumbers, smsNumbers, callHistory, recordings, campaigns, subscription, usage,
