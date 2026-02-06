@@ -433,14 +433,32 @@ app.post('/api/billing/subscribe/:plan', async (req, res) => {
   try {
     const shop = getShopFromRequest(req);
     const { plan } = req.params;
-    if (!shop || shop === 'unknown-shop') return res.status(400).json({ error: 'Shop domain required' });
+    
+    console.log(`💳 Starting billing subscription for shop: ${shop}, plan: ${plan}`);
+    
+    if (!shop || shop === 'unknown-shop') {
+      console.error('❌ Billing failed: No shop domain provided');
+      return res.status(400).json({ error: 'Shop domain required' });
+    }
+    
     const spec = SHOPIFY_BILLING_PLANS[plan];
-    if (!spec) return res.status(400).json({ error: 'Invalid plan' });
+    if (!spec) {
+      console.error(`❌ Billing failed: Invalid plan "${plan}"`);
+      return res.status(400).json({ error: 'Invalid plan' });
+    }
 
+    console.log(`🔍 Getting access token for shop: ${shop}`);
     const token = await getShopAccessToken(shop);
+    
+    if (!token) {
+      console.error(`❌ Billing failed: No access token for shop ${shop}`);
+      return res.status(401).json({ error: 'Shop not installed or no access token' });
+    }
 
     const hostParam = req.query.host || ''; // optional, helps round-trip back to embedded UI
     const returnUrl = `https://${req.get('host')}/auth/billing/callback?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&plan=${encodeURIComponent(plan)}&kind=sub`;
+    
+    console.log(`🔗 Return URL: ${returnUrl}`);
 
     const mutation = `
       mutation CreateSub($name: String!, $returnUrl: URL!, $lineItems: [AppSubscriptionLineItemInput!]!, $trialDays: Int) {
@@ -474,18 +492,25 @@ app.post('/api/billing/subscribe/:plan', async (req, res) => {
       ]
     };
 
+    console.log(`📊 Sending GraphQL mutation to Shopify for ${shop}:`, { name: spec.name, trialDays: spec.trialDays });
     const data = await shopifyGraphQL(shop, token, mutation, variables);
     const result = data.appSubscriptionCreate;
+    
+    console.log(`📋 Shopify GraphQL response:`, JSON.stringify(result, null, 2));
+    
     if (result.userErrors?.length) {
+      console.error(`❌ Shopify returned user errors:`, result.userErrors);
       return res.status(400).json({ error: result.userErrors.map(u => u.message).join('; ') });
     }
     if (!result.confirmationUrl) {
+      console.error(`❌ No confirmationUrl returned from Shopify for ${shop}`);
       return res.status(500).json({ error: 'No confirmationUrl returned from Shopify' });
     }
 
+    console.log(`✅ Billing subscription created successfully for ${shop}, confirmationUrl: ${result.confirmationUrl}`);
     return res.json({ confirmationUrl: result.confirmationUrl });
   } catch (e) {
-    console.error('billing subscribe error', e);
+    console.error(`💥 Billing subscribe error for shop ${getShopFromRequest(req)}:`, e);
     return res.status(500).json({ error: e.message });
   }
 });
@@ -502,15 +527,24 @@ app.get('/auth/billing/callback', async (req, res) => {
     console.log(`💳 Billing callback: shop=${shop}, kind=${kind}, plan=${plan}, code=${code}`);
 
     if (!shop || !shop.endsWith('.myshopify.com')) {
+      console.error(`❌ Billing callback: Invalid shop domain: ${shop}`);
       return res.status(400).send('Missing or invalid shop');
     }
 
     // Get the access token
+    console.log(`🔍 Getting access token for billing callback: ${shop}`);
     const token = await getShopAccessToken(shop);
+    
+    if (!token) {
+      console.error(`❌ Billing callback: No access token for shop ${shop}`);
+      const redirectUrl = `/?shop=${encodeURIComponent(shop)}${host ? `&host=${encodeURIComponent(host)}` : ''}&billing_error=1`;
+      return res.redirect(redirectUrl);
+    }
 
     // Handle subscription billing
     if (kind === 'sub') {
       try {
+        console.log(`🔍 Verifying subscription for ${shop} and plan ${plan}`);
         // Verify the subscription is actually active
         const query = `
           query CurrentAppInstallation {
@@ -535,9 +569,12 @@ app.get('/auth/billing/callback', async (req, res) => {
 
         const data = await shopifyGraphQL(shop, token, query);
         const active = data.currentAppInstallation?.activeSubscriptions || [];
+        
+        console.log(`📋 Found ${active.length} active subscriptions for ${shop}:`, active.map(sub => ({ id: sub.id, name: sub.name, status: sub.status })));
 
         if (active.length > 0) {
           // Success - update our records
+          console.log(`✅ Updating subscription records for ${shop}`);
           const batch = db.batch();
 
           // Cancel existing subscriptions
@@ -546,6 +583,7 @@ app.get('/auth/billing/callback', async (req, res) => {
             .where('status', '==', 'active')
             .get();
 
+          console.log(`🧹 Cancelling ${existingActive.size} existing active subscriptions`);
           existingActive.forEach(doc => batch.update(doc.ref, {
             status: 'cancelled',
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -565,9 +603,11 @@ app.get('/auth/billing/callback', async (req, res) => {
 
           await batch.commit();
           console.log(`✅ Subscription activated: ${plan} for ${shop}`);
+        } else {
+          console.warn(`⚠️ No active subscriptions found for ${shop}, user may have cancelled`);
         }
       } catch (e) {
-        console.warn('Subscription verification failed:', e.message);
+        console.error(`❌ Subscription verification failed for ${shop}:`, e.message);
       }
     }
 
@@ -599,8 +639,10 @@ app.get('/auth/billing/callback', async (req, res) => {
     
     // Add success message in URL for user feedback
     const successParam = kind === 'addon' ? '&addon_success=1' : '&billing_success=1';
+    const finalUrl = redirectUrl + successParam;
     
-    return res.redirect(redirectUrl + successParam);
+    console.log(`🔄 Billing callback complete, redirecting to: ${finalUrl}`);
+    return res.redirect(finalUrl);
 
   } catch (e) {
     console.error('💥 Billing callback error:', e);
