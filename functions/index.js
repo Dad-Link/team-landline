@@ -241,13 +241,27 @@ app.post('/api/billing/addon/:code', async (req, res) => {
   try {
     const shop = getShopFromRequest(req);
     const { code } = req.params;
+    const hostParam = req.query.host || '';
+    
+    console.log(`🛒 Addon purchase request: shop=${shop}, code=${code}, host=${hostParam}`);
+    
     const spec = ADDON_CATALOG[code];
-    if (!shop || shop === 'unknown-shop') return res.status(400).json({ error: 'Shop domain required' });
-    if (!spec) return res.status(400).json({ error: 'Invalid add-on code' });
+    if (!shop || shop === 'unknown-shop') {
+      console.error('❌ Addon failed: Missing or invalid shop domain');
+      return res.status(400).json({ error: 'Shop domain required' });
+    }
+    if (!spec) {
+      console.error(`❌ Addon failed: Invalid add-on code: ${code}`);
+      return res.status(400).json({ error: 'Invalid add-on code' });
+    }
+
+    console.log(`📋 Addon spec: ${spec.name} - ${spec.price} GBP`);
 
     const token = await getShopAccessToken(shop);
-    const hostParam = req.query.host || '';
+    console.log(`🔐 Got access token for addon purchase: ${shop.substring(0, 10)}...`);
+    
     const returnUrl = `https://${req.get('host')}/auth/billing/callback?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&kind=addon&code=${encodeURIComponent(code)}`;
+    console.log(`🔄 Addon return URL: ${returnUrl}`);
 
     const mutation = `
       mutation CreateOneTime($name: String!, $price: MoneyInput!, $returnUrl: URL!) {
@@ -267,17 +281,24 @@ app.post('/api/billing/addon/:code', async (req, res) => {
       price: { amount: spec.price, currencyCode: 'GBP' },
       returnUrl
     };
+    
+    console.log(`🌐 Sending Shopify GraphQL mutation for addon: ${spec.name}`);
     const data = await shopifyGraphQL(shop, token, mutation, variables);
     const result = data.appPurchaseOneTimeCreate;
+    
     if (result.userErrors?.length) {
+      console.error('❌ Shopify addon errors:', result.userErrors);
       return res.status(400).json({ error: result.userErrors.map(u => u.message).join('; ') });
     }
     if (!result.confirmationUrl) {
+      console.error('❌ No confirmationUrl in addon response:', result);
       return res.status(500).json({ error: 'No confirmationUrl returned from Shopify' });
     }
+    
+    console.log(`✅ Addon purchase created successfully: ${result.confirmationUrl}`);
     res.json({ confirmationUrl: result.confirmationUrl });
   } catch (e) {
-    console.error('addon purchase error', e);
+    console.error('💥 Addon purchase error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -433,14 +454,28 @@ app.post('/api/billing/subscribe/:plan', async (req, res) => {
   try {
     const shop = getShopFromRequest(req);
     const { plan } = req.params;
-    if (!shop || shop === 'unknown-shop') return res.status(400).json({ error: 'Shop domain required' });
+    const hostParam = req.query.host || '';
+    
+    console.log(`💳 Billing subscription request: shop=${shop}, plan=${plan}, host=${hostParam}`);
+    
+    if (!shop || shop === 'unknown-shop') {
+      console.error('❌ Billing failed: Missing or invalid shop domain');
+      return res.status(400).json({ error: 'Shop domain required' });
+    }
+    
     const spec = SHOPIFY_BILLING_PLANS[plan];
-    if (!spec) return res.status(400).json({ error: 'Invalid plan' });
+    if (!spec) {
+      console.error(`❌ Billing failed: Invalid plan: ${plan}`);
+      return res.status(400).json({ error: 'Invalid plan' });
+    }
+
+    console.log(`📋 Plan spec: ${spec.name} - ${spec.amount} ${spec.currencyCode}`);
 
     const token = await getShopAccessToken(shop);
+    console.log(`🔐 Got access token for shop: ${shop.substring(0, 10)}...`);
 
-    const hostParam = req.query.host || ''; // optional, helps round-trip back to embedded UI
     const returnUrl = `https://${req.get('host')}/auth/billing/callback?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&plan=${encodeURIComponent(plan)}&kind=sub`;
+    console.log(`🔄 Return URL: ${returnUrl}`);
 
     const mutation = `
       mutation CreateSub($name: String!, $returnUrl: URL!, $lineItems: [AppSubscriptionLineItemInput!]!, $trialDays: Int) {
@@ -474,18 +509,24 @@ app.post('/api/billing/subscribe/:plan', async (req, res) => {
       ]
     };
 
+    console.log(`🌐 Sending Shopify GraphQL mutation for: ${spec.name}`);
     const data = await shopifyGraphQL(shop, token, mutation, variables);
     const result = data.appSubscriptionCreate;
+    
     if (result.userErrors?.length) {
+      console.error('❌ Shopify billing errors:', result.userErrors);
       return res.status(400).json({ error: result.userErrors.map(u => u.message).join('; ') });
     }
+    
     if (!result.confirmationUrl) {
+      console.error('❌ No confirmationUrl in Shopify response:', result);
       return res.status(500).json({ error: 'No confirmationUrl returned from Shopify' });
     }
 
+    console.log(`✅ Billing subscription created successfully: ${result.confirmationUrl}`);
     return res.json({ confirmationUrl: result.confirmationUrl });
   } catch (e) {
-    console.error('billing subscribe error', e);
+    console.error('💥 Billing subscribe error:', e);
     return res.status(500).json({ error: e.message });
   }
 });
